@@ -1,11 +1,11 @@
 import sys
-print("--- Python is reading the file ---")  # This proves the file is running
+print("--- Python is reading the file ---")  
 
 try:
     from flask import Flask
     from flasgger import Swagger
     
-    # Import the Blueprints (Make sure these folder/file names match exactly!)
+    # Import the Blueprints 
     from routes.categories import category_bp
     from routes.inventory import inventory_bp
     
@@ -32,7 +32,6 @@ except Exception as e:
 if __name__ == '__main__':
     print("------------------------------------------------")
     print("✅ Server starting...")
-    print("👉 Local URL: http://127.0.0.1:8089/apidocs") 
     print("------------------------------------------------")
     
     app.run(
