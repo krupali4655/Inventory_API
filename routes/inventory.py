@@ -1,5 +1,7 @@
 from flask import Blueprint, jsonify, request
 from debug_db import execute_read, execute_change
+from schemas import ItemCreateSchema, ItemUpdateSchema
+from pydantic import ValidationError
 
 inventory_bp = Blueprint('inventory', __name__)
 
@@ -28,7 +30,7 @@ def get_inventory():
     return jsonify(inventory), 200
 
 # ===========================
-# 2. CREATE ITEM
+# 2. CREATE ITEM (Updated with Pydantic)
 @inventory_bp.route('/', methods=['POST'])
 def add_item():
     """
@@ -42,38 +44,35 @@ def add_item():
         required: true
         schema:
           type: object
-          required:
-            - product_name
-            - category_id
+          required: [product_name, category_id]
           properties:
-            product_name:
-              type: string
-              example: "Laptop"
-            category_id:
-              type: integer
-              example: 1
-            quantity:
-              type: integer
-              example: 10
-            price:
-              type: number
-              example: 999.99
+            product_name: {type: string, example: "Laptop"}
+            category_id: {type: integer, example: 1}
+            quantity: {type: integer, example: 10}
+            price: {type: number, example: 999.99}
     responses:
       201:
         description: Item created
+      400:
+        description: Validation Error
     """
-    data = request.get_json()
     try:
+        # 1. VALIDATE DATA
+        body = ItemCreateSchema(**request.get_json())
+
+        # 2. EXECUTE DB CHANGE
+        # Note: We access fields using dot notation (body.product_name)
         row, error = execute_change(
             """INSERT INTO inventory (product_name, category_id, quantity, price) 
                VALUES (%s, %s, %s, %s) RETURNING id;""",
-            (data['product_name'], data['category_id'], data['quantity'], data['price']),
+            (body.product_name, body.category_id, body.quantity, body.price),
             returning=True
         )
         if error: return jsonify({"error": error}), 400
         return jsonify({"message": "Item added", "id": row[0]}), 201
-    except KeyError as e:
-        return jsonify({"error": f"Missing field: {str(e)}"}), 400
+
+    except ValidationError as e:
+        return jsonify({"error": "Validation Error", "details": e.errors()}), 400
 
 # ===========================
 # 3. GET SINGLE ITEM
@@ -89,7 +88,6 @@ def get_single_item(item_id):
         in: path
         type: integer
         required: true
-        description: ID of the item to fetch
     responses:
       200:
         description: Item details
@@ -108,7 +106,7 @@ def get_single_item(item_id):
     return jsonify(item), 200
 
 # ===========================
-# 4. UPDATE ITEM
+# 4. UPDATE ITEM (Updated with Pydantic)
 @inventory_bp.route('/<int:item_id>', methods=['PUT'])
 def update_item(item_id):
     """
@@ -127,23 +125,29 @@ def update_item(item_id):
         schema:
           type: object
           properties:
-            quantity:
-              type: integer
-              example: 50
-            price:
-              type: number
-              example: 899.99
+            quantity: {type: integer, example: 50}
+            price: {type: number, example: 899.99}
     responses:
       200:
         description: Item updated
+      400:
+        description: Validation Error
     """
-    data = request.get_json()
-    _, error = execute_change(
-        "UPDATE inventory SET quantity = %s, price = %s WHERE id = %s;",
-        (data.get('quantity'), data.get('price'), item_id)
-    )
-    if error: return jsonify({"error": error}), 400
-    return jsonify({"message": "Item updated"}), 200
+    try:
+        # 1. VALIDATE DATA (allows optional fields)
+        body = ItemUpdateSchema(**request.get_json())
+
+        # 2. EXECUTE DB CHANGE
+        # We use body.quantity and body.price. They will be None if not provided.
+        _, error = execute_change(
+            "UPDATE inventory SET quantity = %s, price = %s WHERE id = %s;",
+            (body.quantity, body.price, item_id)
+        )
+        if error: return jsonify({"error": error}), 400
+        return jsonify({"message": "Item updated"}), 200
+
+    except ValidationError as e:
+        return jsonify({"error": "Validation Error", "details": e.errors()}), 400
 
 # ===========================
 # 5. DELETE ITEM
@@ -166,3 +170,4 @@ def delete_item(item_id):
     _, error = execute_change("DELETE FROM inventory WHERE id = %s;", (item_id,))
     if error: return jsonify({"error": error}), 500
     return jsonify({"message": "Item deleted"}), 200
+
