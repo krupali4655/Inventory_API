@@ -1,5 +1,7 @@
 from flask import Blueprint, jsonify, request
 from debug_db import execute_read, execute_change
+from schemas import CategoryCreateSchema
+from pydantic import ValidationError
 
 category_bp = Blueprint('categories', __name__)
 
@@ -15,17 +17,6 @@ def get_categories():
     responses:
       200:
         description: List of categories
-        schema:
-          type: array
-          items:
-            type: object
-            properties:
-              id:
-                type: integer
-              name:
-                type: string
-              description:
-                type: string
     """
     rows, error = execute_read("SELECT id, name, description FROM categories ORDER BY id;")
     if error: return jsonify({"error": error}), 500
@@ -34,7 +25,7 @@ def get_categories():
     return jsonify(categories), 200
 
 # ===========================
-# 2. CREATE CATEGORY
+# 2. CREATE CATEGORY (Updated with Pydantic)
 @category_bp.route('/', methods=['POST'])
 def add_category():
     """
@@ -58,21 +49,29 @@ def add_category():
     responses:
       201:
         description: Category created
+      400:
+        description: Validation Error
     """
-    data = request.get_json()
-    if not data or not data.get('name'):
-        return jsonify({"error": "Name is required"}), 400
+    try:
+        # 1. VALIDATE DATA
+        body = CategoryCreateSchema(**request.get_json())
+        
+        # 2. EXECUTE DB CHANGE
+        # Note: We use body.name and body.description now
+        row, error = execute_change(
+            "INSERT INTO categories (name, description) VALUES (%s, %s) RETURNING id;",
+            (body.name, body.description),
+            returning=True
+        )
+        
+        if error: return jsonify({"error": error}), 400
+        return jsonify({"message": "Category created", "id": row[0]}), 201
 
-    row, error = execute_change(
-        "INSERT INTO categories (name, description) VALUES (%s, %s) RETURNING id;",
-        (data['name'], data.get('description')),
-        returning=True
-    )
-    if error: return jsonify({"error": error}), 400
-    return jsonify({"message": "Category created", "id": row[0]}), 201
+    except ValidationError as e:
+        return jsonify({"error": "Validation Error", "details": e.errors()}), 400
 
 # ===========================
-# 3. GET STOCK (Existing)
+# 3. GET STOCK
 @category_bp.route('/<int:category_id>/stock', methods=['GET'])
 def get_category_stock(category_id):
     """
@@ -93,3 +92,4 @@ def get_category_stock(category_id):
     if error: return jsonify({"error": error}), 500
     total = row[0][0] if row and row[0][0] is not None else 0
     return jsonify({"category_id": category_id, "total_stock": total}), 200
+
